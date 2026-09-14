@@ -62,25 +62,22 @@ impl Contract for Csv {
             match fields(line) {
                 Ok(count) => match expected {
                     None => expected = Some(count),
-                    Some(want) if count != want => issues.push(ValidationIssue {
-                        code: "field-count".to_string(),
-                        message: format!("row has {count} fields, the header has {want}"),
-                        path: Some(format!("line {}", offset + 1)),
-                    }),
+                    Some(want) if count != want => issues.push(ValidationIssue::at(
+                        "field-count",
+                        &format!("row has {count} fields, the header has {want}"),
+                        &format!("line {}", offset + 1),
+                    )),
                     Some(_) => {}
                 },
-                Err(reason) => issues.push(ValidationIssue {
-                    code: "malformed".to_string(),
-                    message: reason,
-                    path: Some(format!("line {}", offset + 1)),
-                }),
+                Err(reason) => issues.push(ValidationIssue::at(
+                    "malformed",
+                    &reason,
+                    &format!("line {}", offset + 1),
+                )),
             }
         }
 
-        Ok(ValidationResult {
-            valid: issues.is_empty(),
-            issues,
-        })
+        Ok(ValidationResult::of(issues))
     }
 }
 
@@ -116,14 +113,10 @@ fn fields(line: &str) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use xcore::StreamId;
+    use contract::fixture::stream_as;
 
     fn stream(text: &str) -> Stream {
-        Stream::new(
-            StreamId::new(1),
-            text.as_bytes().to_vec(),
-            Some("text/csv".to_string()),
-        )
+        stream_as(text, Some("text/csv"))
     }
 
     #[test]
