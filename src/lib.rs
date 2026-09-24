@@ -12,10 +12,10 @@
 //! break the shape accepted, and took a quote anywhere in a field as opening
 //! one (open-problems.md, problem 25, row d).
 
-use message::record::{self, Delimited};
-use sdk::contract::{
+use contract::{
     Contract, ContractDescriptor, ContractError, ContractId, ValidationIssue, ValidationResult,
 };
+use message::record::{self, Delimited};
 use stream::Stream;
 
 /// The CSV contract.
