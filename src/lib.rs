@@ -3,14 +3,19 @@
 //! The CSV content contract — a technology of `xmip-core-contract`.
 //!
 //! ADR-0010: a contract is the content axis, not a transport. This implements the
-//! capability's [`Contract`] trait for CSV: every non-empty row must have the
-//! same number of fields as the first, honouring `"..."` quoting with `""` as an
-//! escaped quote. A quoted field with an embedded newline spans lines and is
-//! beyond this first cut; the validator says so rather than passing it silently.
+//! capability's [`Contract`] trait for CSV: every non-empty record must have the
+//! same number of fields as the first. The records are the Foundation's walk,
+//! `message::record`, which the CSV shape sections by too: RFC 4180 quoting,
+//! `""` for a quote, and a quoted field may carry a line break.
+//!
+//! This walked lines on its own until 2026-09-23, and refused a quoted line
+//! break the shape accepted, and took a quote anywhere in a field as opening
+//! one (open-problems.md, problem 25, row d).
 
 use contract::{
     Contract, ContractDescriptor, ContractError, ContractId, ValidationIssue, ValidationResult,
 };
+use message::record::{self, Delimited};
 use stream::Stream;
 
 /// The CSV contract.
@@ -43,37 +48,46 @@ impl Contract for Csv {
     }
 
     fn identify(&self, stream: &Stream) -> Result<bool, ContractError> {
-        let text = text(stream)?;
-        Ok(text
-            .lines()
-            .next()
-            .is_some_and(|header| header.contains(',')))
+        text(stream)?;
+        let bytes = stream.bytes();
+        Ok(record::lines(bytes)
+            .first()
+            .is_some_and(|header| bytes[header.clone()].contains(&b',')))
     }
 
     fn validate(&self, stream: &Stream) -> Result<ValidationResult, ContractError> {
-        let text = text(stream)?;
+        text(stream)?;
+        let bytes = stream.bytes();
         let mut issues = Vec::new();
         let mut expected: Option<usize> = None;
 
-        for (offset, line) in text.lines().enumerate() {
-            if line.is_empty() {
+        for walked in Delimited::default().records(bytes) {
+            let found = match walked {
+                Ok(found) => found,
+                // The walk cannot say where the next record starts once one
+                // cannot be cut, so the first malformed record is the last
+                // one read.
+                Err((reason, at)) => {
+                    issues.push(ValidationIssue::at(
+                        "malformed",
+                        reason,
+                        &line_of(bytes, at),
+                    ));
+                    break;
+                }
+            };
+            if found.range.is_empty() {
                 continue;
             }
-            match fields(line) {
-                Ok(count) => match expected {
-                    None => expected = Some(count),
-                    Some(want) if count != want => issues.push(ValidationIssue::at(
-                        "field-count",
-                        &format!("row has {count} fields, the header has {want}"),
-                        &format!("line {}", offset + 1),
-                    )),
-                    Some(_) => {}
-                },
-                Err(reason) => issues.push(ValidationIssue::at(
-                    "malformed",
-                    &reason,
-                    &format!("line {}", offset + 1),
+            let count = found.fields.len();
+            match expected {
+                None => expected = Some(count),
+                Some(want) if count != want => issues.push(ValidationIssue::at(
+                    "field-count",
+                    &format!("row has {count} fields, the header has {want}"),
+                    &line_of(bytes, found.range.start),
                 )),
+                Some(_) => {}
             }
         }
 
@@ -81,33 +95,21 @@ impl Contract for Csv {
     }
 }
 
-fn text(stream: &Stream) -> Result<&str, ContractError> {
-    std::str::from_utf8(stream.bytes()).map_err(|error| ContractError {
-        message: format!("not UTF-8 text: {error}"),
+/// CSV is text; bytes that are not are an error, not an issue.
+fn text(stream: &Stream) -> Result<(), ContractError> {
+    record::text(stream.bytes()).map_err(|(reason, at)| ContractError {
+        message: format!("not text: {reason} at byte {at}"),
     })
 }
 
-/// Count the fields in one row, honouring `"..."` quoting with `""` escapes.
-/// Errors on a quote that never closes.
-fn fields(line: &str) -> Result<usize, String> {
-    let mut count = 1;
-    let mut in_quotes = false;
-    let mut chars = line.chars().peekable();
-    while let Some(character) = chars.next() {
-        match character {
-            '"' if in_quotes && chars.peek() == Some(&'"') => {
-                chars.next();
-            }
-            '"' => in_quotes = !in_quotes,
-            ',' if !in_quotes => count += 1,
-            _ => {}
-        }
-    }
-    if in_quotes {
-        Err("a quoted field is not closed (an embedded newline is not supported yet)".to_string())
-    } else {
-        Ok(count)
-    }
+/// Where byte `at` is, as the line it starts on: a record that carries a
+/// line break is found by the line it opens on.
+fn line_of(bytes: &[u8], at: usize) -> String {
+    // The pieces a split at every line feed makes are the lines so far.
+    let line = bytes[..at.min(bytes.len())]
+        .split(|byte| *byte == b'\n')
+        .count();
+    format!("line {line}")
 }
 
 #[cfg(test)]
@@ -155,5 +157,33 @@ mod tests {
     #[test]
     fn a_comma_header_identifies_as_csv() {
         assert!(Csv::new().identify(&stream("a,b,c")).expect("identifies"));
+    }
+
+    #[test]
+    fn a_quoted_line_break_is_one_field_and_rows_are_placed_by_their_first_line() {
+        // Row d of problem 25: this contract refused a quoted line break the
+        // CSV shape accepted. One walk now, and the record after a two-line
+        // record is found on the line it really starts on.
+        let held = Csv::new()
+            .validate(&stream("a,b\n\"two\nlines\",z\n1"))
+            .expect("validates");
+        assert_eq!(held.issues.len(), 1, "issues: {:?}", held.issues);
+        assert_eq!(held.issues[0].code, "field-count");
+        assert_eq!(held.issues[0].path.as_deref(), Some("line 4"));
+    }
+
+    #[test]
+    fn a_quote_inside_a_field_is_content_and_after_a_closing_one_is_not() {
+        // RFC 4180: a quote opens a field only where the field starts. This
+        // contract took one anywhere as opening, and called `x"y` unclosed.
+        let held = Csv::new()
+            .validate(&stream("a,b\nx\"y,z"))
+            .expect("validates");
+        assert!(held.valid, "issues: {:?}", held.issues);
+
+        let held = Csv::new()
+            .validate(&stream("a,b\n\"x\"y,z"))
+            .expect("validates");
+        assert_eq!(held.issues[0].code, "malformed");
     }
 }
