@@ -70,11 +70,7 @@ impl Contract for Csv {
                 // cannot be cut, so the first malformed record is the last
                 // one read.
                 Err((reason, at)) => {
-                    issues.push(ValidationIssue::at(
-                        "malformed",
-                        reason,
-                        &line_of(bytes, at),
-                    ));
+                    issues.push(ValidationIssue::at("malformed", reason, line_of(bytes, at)));
                     break;
                 }
             };
@@ -86,8 +82,8 @@ impl Contract for Csv {
                 None => expected = Some(count),
                 Some(want) if count != want => issues.push(ValidationIssue::at(
                     "field-count",
-                    &format!("row has {count} fields, the header has {want}"),
-                    &line_of(bytes, found.range.start),
+                    format!("row has {count} fields, the header has {want}"),
+                    line_of(bytes, found.range.start),
                 )),
                 Some(_) => {}
             }
