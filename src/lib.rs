@@ -13,10 +13,12 @@
 //! one (open-problems.md, problem 25, row d).
 
 use contract::{
-    Contract, ContractDescriptor, ContractError, ContractId, ValidationIssue, ValidationResult,
+    Contract, ContractDescriptor, ContractError, ContractFactory, ContractId, ValidationIssue,
+    ValidationResult,
 };
 use message::record::{self, Delimited};
 use stream::Stream;
+use xcore::settings::Settings;
 
 /// The CSV contract.
 pub struct Csv {
@@ -94,6 +96,34 @@ impl Contract for Csv {
         Ok(ValidationResult::of(issues))
     }
 }
+
+/// Loads the contract a Location names: CSV binds to nothing, so only an
+/// empty reference loads it, and anything else is refused rather than
+/// ignored.
+pub struct CsvFactory;
+
+impl ContractFactory for CsvFactory {
+    fn technology(&self) -> &'static str {
+        "csv"
+    }
+
+    fn settings(&self) -> &'static Settings {
+        SETTINGS
+    }
+
+    fn load(&self, reference: &str) -> Result<Box<dyn Contract>, ContractError> {
+        if reference.trim().is_empty() {
+            return Ok(Box::new(Csv::new()));
+        }
+        Err(ContractError {
+            message: format!("csv takes no reference, got {reference:?}"),
+        })
+    }
+}
+
+/// What a Location gives this contract (ADR-0064, amendment 2026-09-26):
+/// nothing, since every CSV is held to its own header.
+const SETTINGS: &Settings = &Settings::none(env!("CARGO_PKG_NAME"));
 
 /// CSV is text; bytes that are not are an error, not an issue.
 fn text(stream: &Stream) -> Result<(), ContractError> {
@@ -185,5 +215,23 @@ mod tests {
             .validate(&stream("a,b\n\"x\"y,z"))
             .expect("validates");
         assert_eq!(held.issues[0].code, "malformed");
+    }
+
+    #[test]
+    fn csv_declares_its_settings_and_reads_through_them() {
+        use xcore::settings::{Applies, Given};
+        assert!(SETTINGS.problems().is_empty(), "{:?}", SETTINGS.problems());
+        let bare = CsvFactory.open(Applies::Both, &[]).expect("bare");
+        assert_eq!(bare.descriptor().id.0, "csv");
+        assert!(
+            CsvFactory.load("orders").is_err(),
+            "a reference csv cannot read"
+        );
+        let given = [("reference".to_string(), Given::Text("orders".to_string()))];
+        let refused = CsvFactory
+            .open(Applies::Receive, &given)
+            .err()
+            .expect("an undeclared setting is refused");
+        assert!(refused.message.contains("reference"), "{}", refused.message);
     }
 }
