@@ -51,7 +51,7 @@ impl Contract for Csv {
 
     fn identify(&self, stream: &Stream) -> Result<bool, ContractError> {
         text(stream)?;
-        let bytes = stream.bytes();
+        let bytes = stream.load()?;
         Ok(record::lines(bytes)
             .first()
             .is_some_and(|header| bytes[header.clone()].contains(&b',')))
@@ -59,7 +59,7 @@ impl Contract for Csv {
 
     fn validate(&self, stream: &Stream) -> Result<ValidationResult, ContractError> {
         text(stream)?;
-        let bytes = stream.bytes();
+        let bytes = stream.load()?;
         let mut issues = Vec::new();
         let mut expected: Option<usize> = None;
 
@@ -123,7 +123,7 @@ const SETTINGS: &Settings = &Settings::none(env!("CARGO_PKG_NAME"));
 
 /// CSV is text; bytes that are not are an error, not an issue.
 fn text(stream: &Stream) -> Result<(), ContractError> {
-    record::text(stream.bytes()).map_err(|(reason, at)| ContractError {
+    record::text(stream.load()?).map_err(|(reason, at)| ContractError {
         message: format!("not text: {reason} at byte {at}"),
     })
 }
