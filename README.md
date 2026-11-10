@@ -5,7 +5,7 @@ field counts, balanced quotes — and conformance, when a layout is named, is
 every row against that layout's columns and types (ADR-0042). A technology of
 [xmip-core-contract](https://github.com/IlleNilsson/xmip-core-contract).
 
-Declared and not yet written; `architecture.xmip` carries the maturity.
+Declared and not yet written; `architecture.toml` carries the maturity.
 
 ## Toolchain
 
