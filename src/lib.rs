@@ -11,20 +11,35 @@
 //! This walked lines on its own until 2026-09-23, and refused a quoted line
 //! break the shape accepted, and took a quote anywhere in a field as opening
 //! one (open-problems.md, problem 25, row d).
+//!
+//! **Built with its `declaration` feature alone** the crate is
+//! [`declaration`], what a Location naming it is configured with and the
+//! name a Validate step names it by, and none of the code above, which is
+//! behind the default feature: what the surfaces' library carries (ADR-0064,
+//! amendment 2026-11-26).
 
+#[cfg(feature = "declaration")]
+pub mod declaration;
+
+#[cfg(feature = "default")]
 use contract::{
     Contract, ContractDescriptor, ContractError, ContractFactory, ContractId, ValidationIssue,
     ValidationResult,
 };
+#[cfg(feature = "default")]
 use message::record::{self, Delimited};
+#[cfg(feature = "default")]
 use stream::Stream;
+#[cfg(feature = "default")]
 use xcore::settings::Settings;
 
 /// The CSV contract.
+#[cfg(feature = "default")]
 pub struct Csv {
     descriptor: ContractDescriptor,
 }
 
+#[cfg(feature = "default")]
 impl Csv {
     #[must_use]
     pub fn new() -> Self {
@@ -38,12 +53,14 @@ impl Csv {
     }
 }
 
+#[cfg(feature = "default")]
 impl Default for Csv {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(feature = "default")]
 impl Contract for Csv {
     fn descriptor(&self) -> &ContractDescriptor {
         &self.descriptor
@@ -96,15 +113,17 @@ impl Contract for Csv {
 /// Loads the contract a Location names: CSV binds to nothing, so only an
 /// empty reference loads it, and anything else is refused rather than
 /// ignored.
+#[cfg(feature = "default")]
 pub struct CsvFactory;
 
+#[cfg(feature = "default")]
 impl ContractFactory for CsvFactory {
     fn technology(&self) -> &'static str {
-        "csv"
+        declaration::NAME
     }
 
     fn settings(&self) -> &'static Settings {
-        SETTINGS
+        declaration::SETTINGS
     }
 
     fn load(&self, reference: &str) -> Result<Box<dyn Contract>, ContractError> {
@@ -117,11 +136,8 @@ impl ContractFactory for CsvFactory {
     }
 }
 
-/// What a Location gives this contract (ADR-0064, amendment 2026-09-26):
-/// nothing, since every CSV is held to its own header.
-const SETTINGS: &Settings = &Settings::none(env!("CARGO_PKG_NAME"));
-
 /// CSV is text; bytes that are not are an error, not an issue.
+#[cfg(feature = "default")]
 fn text(stream: &Stream) -> Result<(), ContractError> {
     record::text(stream.load()?).map_err(|(reason, at)| ContractError {
         message: format!("not text: {reason} at byte {at}"),
@@ -130,6 +146,7 @@ fn text(stream: &Stream) -> Result<(), ContractError> {
 
 /// Where byte `at` is, as the line it starts on: a record that carries a
 /// line break is found by the line it opens on.
+#[cfg(feature = "default")]
 fn line_of(bytes: &[u8], at: usize) -> String {
     // The pieces a split at every line feed makes are the lines so far.
     let line = bytes[..at.min(bytes.len())]
@@ -215,6 +232,7 @@ mod tests {
 
     #[test]
     fn csv_declares_its_settings_and_reads_through_them() {
+        use declaration::SETTINGS;
         use xcore::settings::{Applies, Given};
         assert!(SETTINGS.problems().is_empty(), "{:?}", SETTINGS.problems());
         let bare = CsvFactory.open(Applies::Both, &[]).expect("bare");
